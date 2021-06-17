@@ -1,0 +1,86 @@
+#!/bin/sh
+#
+# backup with snapshots using rsync.
+#
+# usage: backup src dest
+#
+#   src: source directory to backup.
+#   dest: destination directory for the backup.
+
+die()
+{
+    echo "backup: $@"
+    echo "usage: backup src dest"
+    exit 1
+}
+
+[ $# -ne 2 ] && die "invalid number of arguments"
+
+RSYNC="/bin/rsync"
+SRC=$(realpath -q $1)
+DEST=$(realpath -q $2)
+
+[ ! -d "$SRC" ] && die "invalid directory -- '$SRC'"
+[ ! -d "$DEST" ] && die "invalid directory -- '$DEST'"
+[ ! -x "$RSYNC" ] && die "could not find or execute '$RSYNC'"
+
+SNAPSHOTS=$(find "$DEST" -mindepth 1 -maxdepth 1 -type d \
+        -regextype egrep -regex "$DEST/[0-9]{4}-[0-9]{2}-[0-9]{2}" \
+        -printf "%f\n" | sort -n)
+
+NUM_SS=$(echo "$SNAPSHOTS" | wc -l)
+MAX_NUM_SS=4
+
+OLDEST_SS=$(echo "$SNAPSHOTS" | head -q -n1)
+CURRENT_SS=$(date "+%Y-%m-%d")
+
+if [ $NUM_SS -gt 0 ]; then
+    PREVIOUS_SS=$(echo "$SNAPSHOTS" | tail -q -n1)
+    RSYNC_LINK_DEST_OPT="--link-dest=../$PREVIOUS_SS"
+else
+    PREVIOUS_SS="none"
+fi
+
+[ -f "$DEST/.backup.exclude" ] && RSYNC_EXCLUDE_OPT="--exclude-from=$DEST/.backup.exclude"
+
+RSYNC_OPT="\
+    --archive \
+    --hard-links \
+    --acls \
+    --xattrs \
+    --delete \
+    --human-readable \
+    --info=name \
+    $RSYNC_LINK_DEST_OPT \
+    $RSYNC_EXCLUDE_OPT"
+
+cat << EOF
+source:             $SRC
+destination:        $DEST
+previous snapshot:  $PREVIOUS_SS
+current snapshot:   $CURRENT_SS
+EOF
+
+if [ ! -z "$RSYNC_EXCLUDE_OPT" ]; then
+    echo "exclusions:"
+    echo "$(cat $DEST/.backup.exclude | sed "s/^/ /g")"
+fi
+
+read -p ":: proceed with backup? [y/N] " CONFIRM
+case "$CONFIRM" in
+    "y") ;&
+    "Y") ;;
+    "n") ;&
+    "N") ;&
+    *) exit 0 ;;
+esac
+
+echo ":: backing up..."
+$RSYNC $RSYNC_OPT "$SRC/" "$DEST/$CURRENT_SS"
+
+if [ $(expr $NUM_SS + 1) -gt $MAX_NUM_SS ]; then
+    echo ":: more than $MAX_NUM_SS snapshots found. removing oldest snapshot..."
+    rm -rf "$DEST/$OLDEST_SS"
+fi
+
+echo ":: backup complete"
