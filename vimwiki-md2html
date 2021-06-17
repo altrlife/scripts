@@ -1,0 +1,71 @@
+#!/bin/bash
+
+# script to convert vimwiki markdown to html
+
+die()
+{
+  echo "error: $@"
+  exit -2
+}
+
+PANDOC="/usr/bin/pandoc"
+
+# overwrite an existing file
+FORCE="$1"
+# syntax chosen for this wiki
+SYNTAX="$2"
+# file extension for this wiki
+EXTENSION="$3"
+# full path of the output directory
+OUTPUTDIR="$4"
+# full path of the wiki page
+INPUT="$5"
+# full path of the css file for this wiki
+CSSFILE="$6"
+# the full path to the wiki's templates
+TEMPDIR="$7"
+# the default template name
+TEMPDEF="$8"
+# the extension of template files
+TEMPEXT="$9"
+# a count of ../ for pages buried in subdirs
+ROOTDIR="${10}"
+
+[ ! -x "$PANDOC" ] && die "could not find or execute '$RSYNC'"
+[ $SYNTAX = "markdown" ] || die "unsupported syntax '$SYNTAX'"
+
+filter_link() 
+{
+cat << EOF
+function Link(elem)
+  if elem.target:find('^http') == nil then
+    elem.target,count = string.gsub(elem.target, "%.md", ".html")
+    if count == 0 and elem.target:find('#.+$') == nil then
+      elem.target = elem.target .. ".html"
+    end
+    if elem.target:find('^/') ~= nil then
+      elem.target = string.sub(elem.target, 2)
+      elem.target = "$ROOTDIR" .. elem.target
+    end
+  end
+  return elem
+end
+EOF
+}
+
+filter_image() 
+{
+PAGEROOT=${INPUT%$(basename $INPUT)}
+cat << EOF
+function Image(elem)
+  return elem
+end
+EOF
+}
+
+OUTPUT="$OUTPUTDIR""$(basename $INPUT .$EXTENSION).html"
+TEMP="$TEMPDIR$TEMPDEF.$TEMPEXT"
+$PANDOC -f "$SYNTAX"+fenced_code_blocks -t "html5" --template="$TEMP" -c "$CSSFILE" \
+  --lua-filter <(filter_link) \
+  --lua-filter <(filter_image) \
+  "$INPUT" > "$OUTPUT"
